@@ -21,14 +21,8 @@
   - No build step required. No external libs. Uses fetch to `https://api.dictionaryapi.dev/api/v2/entries/en/<word>`.
   - Caches meanings in memory during the session.
 
-  ## Loom Walkthrough
-  - Record a ~3 minute video covering: features, rules, decisions, and challenges.
-
   ## Folder Structure
   - Single file: `index.html` (contains HTML, CSS, JS). Optional: extract JS/CSS later.
 
   ## Accessibility & UX
   - Keyboard: Enter to submit; `Tab` navigable; focus returned to input each turn.
-
-  <!-- ## License
-  - MIT Sakib. -->
