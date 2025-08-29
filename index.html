@@ -1,0 +1,309 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Multiplayer Shiritori (2‑Player, Same Screen)</title>
+  <link rel="stylesheet" href="style.css">
+
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <div>
+        <div class="title">Multiplayer Shiritori</div>
+        <div class="subtitle">2 players • same screen • dictionary validation • countdown</div>
+      </div>
+      <div class="row">
+        <button id="btnHelp" class="ghost">Help</button>
+        <button id="btnReset" class="ghost" title="Reset game (R)">Reset ↺</button>
+      </div>
+    </header>
+
+    <div class="grid">
+      <!-- Left: gameplay -->
+      <section class="card">
+        <div class="row" style="justify-content:space-between;">
+          <div class="row" style="gap:12px;align-items:center">
+            <span>Current:</span>
+            <span id="who" class="pill"><b>Player 1</b></span>
+            <span class="pill small">Target start: <span id="startLetter">Any</span></span>
+          </div>
+          <div class="row" style="gap:16px;align-items:center">
+            <span class="timer" id="timer">15</span>
+            <span class="last-letter" id="lastLetter">–</span>
+          </div>
+        </div>
+
+        <div class="sep"></div>
+
+        <form id="form" class="row" autocomplete="off">
+          <input id="wordInput" type="text" placeholder="Type a word (≥ 4 letters) and press Enter" autofocus />
+          <button id="submitBtn" class="primary" type="submit">Submit</button>
+        </form>
+
+        <div class="row" style="margin-top:10px;gap:10px;align-items:center">
+          <label class="muted">Turn time (sec):</label>
+          <input id="turnSeconds" type="number" min="5" max="90" step="1" value="15" />
+          <button id="applyTime" class="ghost" title="Apply new per-turn time">Apply</button>
+          <div class="space"></div>
+          <span class="status" id="status">Start with any valid English word (≥ 4 letters).</span>
+        </div>
+      </section>
+
+      <!-- Right: scoreboard -->
+      <aside class="card">
+        <div class="score">
+          <div class="item">
+            <div class="row" style="justify-content:space-between"><b>Player 1</b><span id="p1Delta"></span></div>
+            <div style="font-size:28px;font-weight:900" id="p1Score">0</div>
+          </div>
+          <div class="item">
+            <div class="row" style="justify-content:space-between"><b>Player 2</b><span id="p2Delta"></span></div>
+            <div style="font-size:28px;font-weight:900" id="p2Score">0</div>
+          </div>
+        </div>
+        <div class="sep"></div>
+        <details>
+          <summary>Rules</summary>
+          <ul class="help">
+            <li>Each new word must start with the <b>last letter</b> of the previous word.</li>
+            <li>Words must be <b>valid English</b> (checked via Dictionary API).</li>
+            <li><b>No repeats</b>. Minimum length: <b>4 letters</b>.</li>
+            <li>⏱️ If the timer hits 0 or the word is invalid → you lose 1 point and turn passes.</li>
+            <li>✅ Valid word → +1 point. The next player must start with the last letter of that word.</li>
+          </ul>
+        </details>
+      </aside>
+    </div>
+
+    <section class="card" style="margin-top:16px">
+      <div class="row" style="justify-content:space-between;align-items:center">
+        <b>Word History</b>
+        <span class="muted">Avoid repeats. Click a word to copy.</span>
+      </div>
+      <div id="history" class="list" style="margin-top:10px"></div>
+    </section>
+
+    <div class="footer">
+      <span>Dictionary: <span class="kbd">dictionaryapi.dev</span></span>
+      <span>Shortcut: <span class="kbd">R</span> to reset</span>
+    </div>
+  </div>
+
+  <dialog id="helpDialog" style="max-width:720px;border:none;border-radius:16px;padding:0;box-shadow:0 20px 80px rgba(0,0,0,.6)">
+    <div class="card" style="margin:0;border-radius:16px">
+      <h3 style="margin:0 0 8px 0">How to Play</h3>
+      <div class="help">
+        Take turns entering words. First word can be anything (≥ 4 letters). Each next word must start with the last letter of the previous word. Words must exist in English and not be repeated.
+        Valid: +1 point. Invalid or timeout: −1 point and turn passes.
+      </div>
+      <div class="sep"></div>
+      <button id="closeHelp" class="primary" style="width:100%">Got it</button>
+    </div>
+  </dialog>
+
+  <script>
+    // ======= State =======
+    const state = {
+      players: [1,2],
+      current: 1,
+      lastLetter: null,
+      used: new Set(), // lowercase words
+      scores: {1:0, 2:0},
+      turnSeconds: 15,
+      timeLeft: 15,
+      timerId: null,
+      cache: new Map(), // word -> { ok, meaning }
+    };
+
+    // ======= DOM =======
+    const els = {
+      who: document.getElementById('who'),
+      startLetter: document.getElementById('startLetter'),
+      lastLetter: document.getElementById('lastLetter'),
+      timer: document.getElementById('timer'),
+      status: document.getElementById('status'),
+      input: document.getElementById('wordInput'),
+      submit: document.getElementById('submitBtn'),
+      form: document.getElementById('form'),
+      history: document.getElementById('history'),
+      p1: document.getElementById('p1Score'),
+      p2: document.getElementById('p2Score'),
+      p1Delta: document.getElementById('p1Delta'),
+      p2Delta: document.getElementById('p2Delta'),
+      turnSeconds: document.getElementById('turnSeconds'),
+      applyTime: document.getElementById('applyTime'),
+      btnReset: document.getElementById('btnReset'),
+      btnHelp: document.getElementById('btnHelp'),
+      helpDialog: document.getElementById('helpDialog'),
+      closeHelp: document.getElementById('closeHelp'),
+    };
+
+    // ======= Utilities =======
+    const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+    const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
+    const sanitize = (w) => (w||'').toLowerCase().trim().replace(/[^a-z]/g,'');
+    const lastAlpha = (w) => {
+      for (let i=w.length-1;i>=0;i--) { const c=w[i]; if (/[a-z]/.test(c)) return c; }
+      return null;
+    };
+
+    function setStatus(msg, kind=''){
+      els.status.textContent = msg;
+      els.status.style.color = kind==='bad'? 'var(--bad)' : kind==='good'? 'var(--good)' : 'var(--muted)';
+    }
+
+    function updateHeader(){
+      els.who.innerHTML = `<b>Player ${state.current}</b>`;
+      els.startLetter.textContent = state.lastLetter ? state.lastLetter.toUpperCase() : 'Any';
+      els.lastLetter.textContent = state.lastLetter ? state.lastLetter.toUpperCase() : '–';
+      els.timer.textContent = state.timeLeft;
+    }
+
+    function updateScores(delta = 0){
+      els.p1.textContent = state.scores[1];
+      els.p2.textContent = state.scores[2];
+      els.p1Delta.textContent = '';
+      els.p2Delta.textContent = '';
+      if (delta !== 0) {
+        const el = state.current===1? els.p1Delta : els.p2Delta;
+        el.textContent = (delta>0?'+':'') + delta;
+        el.className = 'pill small ' + (delta>0? 'good' : 'bad');
+        setTimeout(()=>{ el.textContent=''; el.className=''; }, 1200);
+      }
+    }
+
+    function addHistoryItem(word, meaning, player){
+      const row = document.createElement('div');
+      row.className = 'word';
+      const left = document.createElement('div');
+      const title = document.createElement('div');
+      title.innerHTML = `<b>${word}</b> <span class="muted">• P${player}</span>`;
+      const def = document.createElement('div');
+      def.className = 'def';
+      def.textContent = meaning || '';
+      left.appendChild(title); left.appendChild(def);
+
+      const meta = document.createElement('div');
+      meta.className = 'meta';
+      const k = document.createElement('span'); k.className='kbd'; k.textContent = 'Copy';
+      k.title = 'Copy word to clipboard';
+      k.addEventListener('click', async ()=>{
+        try { await navigator.clipboard.writeText(word); k.textContent='Copied'; await sleep(600); k.textContent='Copy'; } catch {}
+      });
+      meta.appendChild(k);
+
+      row.appendChild(left); row.appendChild(meta);
+      els.history.prepend(row);
+    }
+
+    function nextPlayer(){
+      state.current = (state.current===1?2:1);
+      state.timeLeft = state.turnSeconds;
+      updateHeader();
+      restartTimer();
+      els.input.focus();
+    }
+
+    function stopTimer(){ if (state.timerId) { clearInterval(state.timerId); state.timerId = null; } }
+    function restartTimer(){
+      stopTimer();
+      els.timer.textContent = state.timeLeft;
+      state.timerId = setInterval(()=>{
+        state.timeLeft -= 1; els.timer.textContent = state.timeLeft;
+        if (state.timeLeft <= 0){
+          // Timeout → -1 point and turn passes (keep lastLetter)
+          stopTimer();
+          applyPenalty('⏱️ Time up! −1 point.');
+          nextPlayer();
+        }
+      }, 1000);
+    }
+
+    function applyReward(){ state.scores[state.current] += 1; updateScores(+1); }
+    function applyPenalty(msg){ state.scores[state.current] -= 1; updateScores(-1); setStatus(msg||'Invalid. −1 point.', 'bad'); }
+
+    function resetGame(){
+      stopTimer();
+      state.current = 1;
+      state.lastLetter = null;
+      state.used = new Set();
+      state.scores = {1:0,2:0};
+      state.timeLeft = state.turnSeconds;
+      els.history.innerHTML='';
+      setStatus('Start with any valid English word (≥ 4 letters).');
+      updateHeader();
+      updateScores(0);
+      restartTimer();
+      els.input.value='';
+      els.input.focus();
+    }
+
+    // ======= Validation =======
+    function structureIssues(word){
+      if (!word || word.length < 4) return 'Word must be at least 4 letters.';
+      if (state.lastLetter && word[0] !== state.lastLetter) return `Must start with '${state.lastLetter.toUpperCase()}'.`;
+      if (state.used.has(word)) return 'Word already used.';
+      return null;
+    }
+
+    async function checkDictionary(word){
+      if (state.cache.has(word)) return state.cache.get(word);
+      try{
+        const res = await fetch(`https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(word)}`);
+        if (!res.ok) throw new Error('not ok');
+        const data = await res.json();
+        const meaning = Array.isArray(data) && data[0] && data[0].meanings && data[0].meanings[0] && data[0].meanings[0].definitions && data[0].meanings[0].definitions[0] && data[0].meanings[0].definitions[0].definition ? data[0].meanings[0].definitions[0].definition : '';
+        const out = { ok: true, meaning };
+        state.cache.set(word, out);
+        return out;
+      } catch {
+        const out = { ok:false, meaning:'' };
+        state.cache.set(word, out);
+        return out;
+      }
+    }
+
+    async function handleSubmit(evt){
+      evt.preventDefault();
+      const raw = els.input.value;
+      const word = sanitize(raw);
+      const issue = structureIssues(word);
+      if (issue){ applyPenalty(issue); els.input.select(); return; }
+
+      els.submit.disabled = true; setStatus('Checking dictionary…');
+      const { ok, meaning } = await checkDictionary(word);
+      els.submit.disabled = false;
+
+      if (!ok){ applyPenalty('Not found in dictionary.'); els.input.select(); return; }
+
+      // Good word → reward, set last letter, add to used/history, pass turn
+      state.used.add(word);
+      const end = lastAlpha(word);
+      state.lastLetter = end || null;
+      applyReward();
+      addHistoryItem(word, meaning, state.current);
+      setStatus(`Nice! Next must start with '${(state.lastLetter||'').toUpperCase()}'`, 'good');
+      els.input.value='';
+      nextPlayer();
+    }
+
+    // ======= Events =======
+    els.form.addEventListener('submit', handleSubmit);
+    els.applyTime.addEventListener('click', ()=>{
+      const v = clamp(parseInt(els.turnSeconds.value||'15',10), 5, 90);
+      state.turnSeconds = v; state.timeLeft = v; updateHeader(); restartTimer();
+      setStatus(`Per‑turn timer set to ${v}s.`);
+    });
+    els.btnReset.addEventListener('click', resetGame);
+    document.addEventListener('keydown', (e)=>{ if (e.key==='r' || e.key==='R') resetGame(); });
+
+    els.btnHelp.addEventListener('click', ()=> els.helpDialog.showModal());
+    els.closeHelp.addEventListener('click', ()=> els.helpDialog.close());
+
+    // ======= Boot =======
+    resetGame();
+  </script>
+</body>
+</html>
