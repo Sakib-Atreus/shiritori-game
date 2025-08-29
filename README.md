@@ -30,5 +30,5 @@
   ## Accessibility & UX
   - Keyboard: Enter to submit; `Tab` navigable; focus returned to input each turn.
 
-  ## License
-  - MIT Sakib.
+  <!-- ## License
+  - MIT Sakib. -->
