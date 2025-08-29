@@ -1,5 +1,3 @@
-<!--
-
   # Multiplayer Shiritori (2-Player, Same Screen)
 
   A minimal, dependency‑free browser game implementing Shiritori with:
@@ -33,5 +31,4 @@
   - Keyboard: Enter to submit; `Tab` navigable; focus returned to input each turn.
 
   ## License
-  - MIT (or your choice).
-  -->
+  - MIT Sakib.
